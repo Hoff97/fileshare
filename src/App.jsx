@@ -285,6 +285,7 @@ function App() {
   const [scannerTitle, setScannerTitle] = useState('Scan QR code')
   const [scannerPrompt, setScannerPrompt] = useState('Point the camera at the QR code on the other device.')
   const [pendingApproval, setPendingApproval] = useState(null)
+  const [nearbyRequest, setNearbyRequest] = useState(null)
   const [shareTargetState, setShareTargetState] = useState(() => ({
     tone: typeof navigator !== 'undefined' && 'serviceWorker' in navigator ? 'checking' : 'unsupported',
     label:
@@ -381,6 +382,32 @@ function App() {
     )
   }
 
+  async function watchForRoomAnswer(roomId, sessionToken) {
+    try {
+      const answerEntry = await waitForRoomDescription(
+        roomId,
+        'answer',
+        sessionToken,
+        `Waiting for the second device to join room ${roomId}…`,
+      )
+
+      if (!answerEntry?.description) {
+        return
+      }
+
+      const requesterName = answerEntry.deviceName?.trim() || 'Another device'
+
+      setPendingApproval({
+        roomId,
+        description: answerEntry.description,
+        deviceName: requesterName,
+      })
+      setStatus(`${requesterName} wants to join room ${roomId}. Approve this connection to continue.`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not finish the room pairing.')
+    }
+  }
+
   function stopScanner() {
     if (frameRef.current) {
       cancelAnimationFrame(frameRef.current)
@@ -399,6 +426,7 @@ function App() {
     stopScanner()
     sessionTokenRef.current = ''
     setPendingApproval(null)
+    setNearbyRequest(null)
 
     if (channelRef.current) {
       channelRef.current.onopen = null
@@ -591,25 +619,9 @@ function App() {
         setInviteLink(nextInviteLink)
         setStatus(`Room ${roomId} is ready. Let the other device open the QR or short link.`)
 
-        const answerEntry = await waitForRoomDescription(
-          roomId,
-          'answer',
-          sessionToken,
-          `Waiting for the second device to join room ${roomId}…`,
-        )
+        void watchForRoomAnswer(roomId, sessionToken)
 
-        if (answerEntry?.description) {
-          const requesterName = answerEntry.deviceName?.trim() || 'Another device'
-
-          setPendingApproval({
-            roomId,
-            description: answerEntry.description,
-            deviceName: requesterName,
-          })
-          setStatus(`${requesterName} wants to join room ${roomId}. Approve this connection to continue.`)
-        }
-
-        return
+        return roomId
       }
 
       const { peerConnection } = createPeerConnection()
@@ -629,6 +641,7 @@ function App() {
       setResponseCode('')
       setStatus('Invite ready. Scan it on the second device, then return the answer code.')
       addActivity('Invite QR code generated.')
+      return nextInviteLink
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not generate an invite.')
     }
@@ -791,6 +804,77 @@ function App() {
     } catch {
       // Ignore aborted shares.
     }
+  }
+
+  async function handleNearbyConnection(device) {
+    try {
+      if (device?.status === 'ready' && device.roomId) {
+        await joinRoom(device.roomId)
+        return
+      }
+
+      const activeRoomId = normalizeRoomId(roomCode) || normalizeRoomId(await createInvite())
+
+      if (!activeRoomId) {
+        throw new Error('Create a room first so the nearby device has something to join.')
+      }
+
+      const result = await requestPresence({
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: localDeviceId,
+          deviceName: localDeviceName,
+          roomId: activeRoomId,
+          status: 'ready',
+          connectToDeviceId: device.deviceId,
+          connectRoomId: activeRoomId,
+        }),
+      })
+
+      setNearbyDevices(Array.isArray(result?.devices) ? result.devices : [])
+      setStatus(`Connection request sent to ${device.deviceName || 'that device'}. Ask them to accept it.`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not start a nearby-device connection.')
+    }
+  }
+
+  async function clearNearbyConnectionRequest() {
+    try {
+      await requestPresence({
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: localDeviceId,
+          deviceName: localDeviceName,
+          roomId: roomCode,
+          status: isConnected ? 'connected' : inviteLink ? 'ready' : 'idle',
+          clearIncomingRequest: true,
+        }),
+      })
+    } catch {
+      // Ignore cleanup failures for stale nearby requests.
+    }
+  }
+
+  async function acceptNearbyRequest() {
+    if (!nearbyRequest?.roomId) {
+      return
+    }
+
+    const request = nearbyRequest
+    setNearbyRequest(null)
+    await clearNearbyConnectionRequest()
+    await joinRoom(request.roomId)
+  }
+
+  async function declineNearbyRequest() {
+    if (!nearbyRequest) {
+      return
+    }
+
+    const requesterName = nearbyRequest.fromDeviceName || 'that device'
+    setNearbyRequest(null)
+    await clearNearbyConnectionRequest()
+    setStatus(`Declined the nearby connection request from ${requesterName}.`)
   }
 
   async function waitForDrain(channel) {
@@ -1048,6 +1132,7 @@ function App() {
         }
 
         setNearbyDevices(Array.isArray(result?.devices) ? result.devices : [])
+        setNearbyRequest(result?.requestForMe?.roomId ? result.requestForMe : null)
         setPresenceError('')
       } catch {
         if (!isActive) {
@@ -1274,19 +1359,17 @@ function App() {
                           <strong>{device.deviceName || 'Another device'}</strong>
                           <p>{formatNearbyStatus(device)}</p>
                         </div>
-                        {device.status === 'ready' && device.roomId ? (
+                        {device.status === 'connected' ? null : (
                           <button
                             type="button"
                             className="button secondary"
                             onClick={() => {
-                              void joinRoom(device.roomId).catch((error) => {
-                                setStatus(error instanceof Error ? error.message : 'Could not join that device.')
-                              })
+                              void handleNearbyConnection(device)
                             }}
                           >
-                            Join
+                            {device.status === 'ready' && device.roomId ? 'Join' : 'Connect'}
                           </button>
-                        ) : null}
+                        )}
                       </article>
                     ))
                   ) : (
@@ -1392,6 +1475,35 @@ function App() {
               </button>
               <button type="button" className="button ghost" onClick={declinePendingConnection}>
                 Decline
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {nearbyRequest ? (
+        <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label="Nearby device request">
+          <div className="scanner-box verification-modal">
+            <h3>Nearby device wants to connect</h3>
+            <p>
+              <strong className="verification-device">{nearbyRequest.fromDeviceName || 'Another device'}</strong>
+              {' '}asked to pair on this network.
+            </p>
+            <p className="scanner-tip">
+              Accept to join room {nearbyRequest.roomId} and continue the direct WebRTC handshake.
+            </p>
+            <div className="inline-actions">
+              <button type="button" className="button" onClick={() => {
+                void acceptNearbyRequest().catch((error) => {
+                  setStatus(error instanceof Error ? error.message : 'Could not join the nearby device.')
+                })
+              }}>
+                Accept
+              </button>
+              <button type="button" className="button ghost" onClick={() => {
+                void declineNearbyRequest()
+              }}>
+                Ignore
               </button>
             </div>
           </div>

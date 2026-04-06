@@ -111,6 +111,7 @@ export class NetworkPresenceCoordinator {
     const now = Date.now()
     const requestedDeviceId = (url.searchParams.get('deviceId') ?? '').trim()
     const devices = (await this.state.storage.get('devices')) ?? {}
+    const requests = (await this.state.storage.get('requests')) ?? {}
 
     console.log(
       `[presence-do] ${request.method} bucket=${networkBucket} known=${Object.keys(devices).length} deviceId=${requestedDeviceId || 'n/a'}`,
@@ -122,10 +123,18 @@ export class NetworkPresenceCoordinator {
       }
     }
 
+    for (const [targetDeviceId, requestEntry] of Object.entries(requests)) {
+      if (now - (requestEntry?.updatedAt ?? 0) > PRESENCE_TTL_MS || !devices[targetDeviceId]) {
+        delete requests[targetDeviceId]
+      }
+    }
+
     if (request.method === 'GET') {
       await this.state.storage.put('devices', devices)
+      await this.state.storage.put('requests', requests)
       return json({
         networkBucket,
+        requestForMe: requestedDeviceId ? requests[requestedDeviceId] ?? null : null,
         devices: Object.values(devices)
           .filter((entry) => entry?.deviceId && entry.deviceId !== requestedDeviceId)
           .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0)),
@@ -156,15 +165,35 @@ export class NetworkPresenceCoordinator {
 
       devices[trimmedDeviceId] = nextEntry
 
+      if (body.clearIncomingRequest) {
+        delete requests[trimmedDeviceId]
+      }
+
+      if (body.connectToDeviceId && body.connectRoomId) {
+        const targetDeviceId = String(body.connectToDeviceId).slice(0, 120)
+        requests[targetDeviceId] = {
+          fromDeviceId: trimmedDeviceId,
+          fromDeviceName: nextEntry.deviceName,
+          roomId: String(body.connectRoomId).trim().slice(0, 12).toUpperCase(),
+          updatedAt: now,
+        }
+
+        console.log(
+          `[presence-do] request bucket=${networkBucket} from=${nextEntry.deviceName} to=${targetDeviceId} room=${requests[targetDeviceId].roomId}`,
+        )
+      }
+
       console.log(
         `[presence-do] upsert bucket=${networkBucket} device=${nextEntry.deviceName} status=${nextEntry.status} room=${nextEntry.roomId || '-'}`,
       )
 
       await this.state.storage.put('devices', devices)
+      await this.state.storage.put('requests', requests)
       await this.state.storage.setAlarm(now + PRESENCE_TTL_MS)
 
       return json({
         networkBucket,
+        requestForMe: requests[trimmedDeviceId] ?? null,
         devices: Object.values(devices)
           .filter((entry) => entry?.deviceId && entry.deviceId !== trimmedDeviceId)
           .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0)),
@@ -177,7 +206,16 @@ export class NetworkPresenceCoordinator {
 
       if (deviceId) {
         delete devices[deviceId]
+        delete requests[deviceId]
+
+        for (const [targetDeviceId, requestEntry] of Object.entries(requests)) {
+          if (requestEntry?.fromDeviceId === deviceId) {
+            delete requests[targetDeviceId]
+          }
+        }
+
         await this.state.storage.put('devices', devices)
+        await this.state.storage.put('requests', requests)
       }
 
       return new Response(null, { status: 204, headers: corsHeaders })
