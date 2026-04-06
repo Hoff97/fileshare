@@ -187,9 +187,15 @@ function App() {
   const [scannerError, setScannerError] = useState('')
   const [scannerTitle, setScannerTitle] = useState('Scan QR code')
   const [scannerPrompt, setScannerPrompt] = useState('Point the camera at the QR code on the other device.')
+  const [shareTargetState, setShareTargetState] = useState(() => ({
+    tone: typeof navigator !== 'undefined' && 'serviceWorker' in navigator ? 'checking' : 'unsupported',
+    label:
+      typeof navigator !== 'undefined' && 'serviceWorker' in navigator
+        ? 'Checking share target…'
+        : 'Share target unsupported',
+  }))
 
   const canScanQr = typeof window !== 'undefined' && 'BarcodeDetector' in window
-  const isShareTargetCapable = typeof navigator !== 'undefined' && 'serviceWorker' in navigator
   const appUrl = typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}`
     : ''
@@ -843,6 +849,71 @@ function App() {
   }, [isConnected, pendingSharedFiles])
 
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      return
+    }
+
+    if (!('serviceWorker' in navigator)) {
+      setShareTargetState({
+        tone: 'unsupported',
+        label: 'Share target unsupported',
+      })
+      return
+    }
+
+    let isActive = true
+    let retryId = 0
+    const displayModeQuery = window.matchMedia?.('(display-mode: standalone)')
+
+    const syncShareTargetState = async () => {
+      const isInstalled = Boolean(displayModeQuery?.matches) || window.navigator.standalone === true
+      const registration = await navigator.serviceWorker.getRegistration()
+
+      if (!isActive) {
+        return
+      }
+
+      if (!registration) {
+        setShareTargetState({
+          tone: 'checking',
+          label: 'Preparing share target…',
+        })
+
+        retryId = window.setTimeout(() => {
+          void syncShareTargetState()
+        }, 1200)
+
+        return
+      }
+
+      setShareTargetState(
+        isInstalled
+          ? { tone: 'ready', label: 'Installed & ready' }
+          : { tone: 'install', label: 'Install app to enable sharing' },
+      )
+    }
+
+    const handleInstalled = () => {
+      void syncShareTargetState()
+    }
+
+    void syncShareTargetState()
+    window.addEventListener('appinstalled', handleInstalled)
+    displayModeQuery?.addEventListener?.('change', handleInstalled)
+
+    return () => {
+      isActive = false
+
+      if (retryId) {
+        window.clearTimeout(retryId)
+      }
+
+      window.removeEventListener('appinstalled', handleInstalled)
+      displayModeQuery?.removeEventListener?.('change', handleInstalled)
+    }
+  }, [])
+
+  useEffect(() => {
     const objectUrls = objectUrlsRef.current
 
     return () => {
@@ -858,8 +929,8 @@ function App() {
         <div className="top-bar">
           <div className="status-stack">
             <div className={`status-pill ${isConnected ? 'connected' : ''}`}>{status}</div>
-            <div className={`share-target-pill ${isShareTargetCapable ? 'ready' : ''}`}>
-              {isShareTargetCapable ? 'Share target ready' : 'Share target unavailable'}
+            <div className={`share-target-pill ${shareTargetState.tone}`}>
+              {shareTargetState.label}
             </div>
           </div>
           <div className="inline-actions">

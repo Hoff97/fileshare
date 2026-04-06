@@ -53,9 +53,24 @@
   color: #cbd5e1;
 }
 
+.share-target-pill.checking {
+  background: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+}
+
 .share-target-pill.ready {
   background: rgba(56, 189, 248, 0.14);
   color: #dbeafe;
+}
+
+.share-target-pill.install {
+  background: rgba(250, 204, 21, 0.14);
+  color: #fde68a;
+}
+
+.share-target-pill.unsupported {
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
 }
 
 .connect-layout {
