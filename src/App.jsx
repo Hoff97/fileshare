@@ -117,6 +117,8 @@ function App() {
   const [incomingFiles, setIncomingFiles] = useState([])
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState('')
+  const [scannerTitle, setScannerTitle] = useState('Scan QR code')
+  const [scannerPrompt, setScannerPrompt] = useState('Point the camera at the QR code on the other device.')
 
   const canScanQr = typeof window !== 'undefined' && 'BarcodeDetector' in window
   const appUrl = typeof window !== 'undefined'
@@ -485,7 +487,7 @@ function App() {
     event.target.value = ''
   }
 
-  async function startScanner() {
+  async function startScanner(mode = 'pair') {
     if (!canScanQr) {
       setScannerError('This browser does not support in-app QR scanning. Paste the answer code instead.')
       return
@@ -493,6 +495,12 @@ function App() {
 
     try {
       setScannerError('')
+      setScannerTitle(mode === 'answer' ? 'Scan answer code' : 'Scan QR code')
+      setScannerPrompt(
+        mode === 'answer'
+          ? 'Point the camera at the answer QR shown on the second device.'
+          : 'Point the camera at the QR code on the other device.',
+      )
       setScannerOpen(true)
 
       const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
@@ -594,6 +602,15 @@ function App() {
                     >
                       Copy invite link
                     </button>
+                    {canScanQr ? (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => startScanner('answer')}
+                      >
+                        Scan answer code
+                      </button>
+                    ) : null}
                     {navigator.share ? (
                       <button type="button" className="button secondary" onClick={shareInvite}>
                         Share invite
@@ -638,20 +655,16 @@ function App() {
                   Apply code
                 </button>
                 {canScanQr ? (
-                  <button type="button" className="button secondary" onClick={startScanner}>
-                    Scan QR
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => startScanner(inviteLink ? 'answer' : 'pair')}
+                  >
+                    Use camera
                   </button>
                 ) : null}
               </div>
               {scannerError ? <p className="warning-text">{scannerError}</p> : null}
-              {scannerOpen ? (
-                <div className="scanner-box">
-                  <video ref={videoRef} autoPlay muted playsInline />
-                  <button type="button" className="button secondary" onClick={stopScanner}>
-                    Stop camera
-                  </button>
-                </div>
-              ) : null}
             </div>
           </div>
         ) : (
@@ -712,6 +725,19 @@ function App() {
           </div>
         )}
       </section>
+
+      {scannerOpen ? (
+        <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label={scannerTitle}>
+          <div className="scanner-box scanner-modal">
+            <h3>{scannerTitle}</h3>
+            <p>{scannerPrompt}</p>
+            <video ref={videoRef} autoPlay muted playsInline />
+            <button type="button" className="button secondary" onClick={stopScanner}>
+              Close scanner
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

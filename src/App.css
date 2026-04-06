@@ -92,6 +92,20 @@
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.scanner-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 6, 23, 0.82);
+  z-index: 20;
+}
+
+.scanner-modal {
+  width: min(100%, 420px);
+}
+
 .connect-card {
   place-items: center;
   text-align: center;
@@ -133,6 +147,11 @@
 .warning-text {
   margin: 0;
   color: #fbbf24;
+}
+
+.scanner-box p {
+  margin: 0;
+  color: #bfd0ec;
 }
 
 .scanner-box video {
