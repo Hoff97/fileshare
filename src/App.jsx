@@ -20,9 +20,10 @@ function formatBytes(bytes = 0) {
 }
 
 function encodeSignal(kind, description) {
-  return `${kind[0]}:${compressToEncodedURIComponent(
-    JSON.stringify({ kind, description }),
-  )}`
+  const marker = kind === 'answer' ? 'a' : 'o'
+  const compactDescription = `${marker}${description.sdp.replace(/\r\n/g, '\n')}`
+
+  return `${marker}:${compressToEncodedURIComponent(compactDescription)}`
 }
 
 function decodeSignal(rawText) {
@@ -34,7 +35,10 @@ function decodeSignal(rawText) {
 
   if (/^https?:\/\//i.test(token)) {
     const url = new URL(token)
-    token = url.searchParams.get('offer') ?? url.searchParams.get('answer') ?? ''
+    const offerToken = url.searchParams.get('o') ?? url.searchParams.get('offer')
+    const answerToken = url.searchParams.get('a') ?? url.searchParams.get('answer')
+
+    token = offerToken ? `o:${offerToken}` : answerToken ? `a:${answerToken}` : ''
   }
 
   const separatorIndex = token.indexOf(':')
@@ -46,14 +50,32 @@ function decodeSignal(rawText) {
     throw new Error('This pairing code could not be decoded.')
   }
 
-  const parsed = JSON.parse(decoded)
-  const kind = parsed.kind ?? (prefix === 'o' ? 'offer' : 'answer')
+  if (decoded.startsWith('{')) {
+    const parsed = JSON.parse(decoded)
+    const kind = parsed.kind ?? (prefix === 'o' ? 'offer' : 'answer')
 
-  if (!parsed.description) {
-    throw new Error('The pairing code is missing a WebRTC description.')
+    if (!parsed.description) {
+      throw new Error('The pairing code is missing a WebRTC description.')
+    }
+
+    return { kind, description: parsed.description }
   }
 
-  return { kind, description: parsed.description }
+  const marker = decoded[0] === 'a' ? 'a' : 'o'
+  const kind = marker === 'a' ? 'answer' : 'offer'
+  const sdp = decoded.slice(1).replace(/\n/g, '\r\n')
+
+  if (!sdp) {
+    throw new Error('The pairing code is missing WebRTC data.')
+  }
+
+  return {
+    kind,
+    description: {
+      type: kind,
+      sdp,
+    },
+  }
 }
 
 function waitForIceGatheringComplete(peerConnection) {
@@ -309,7 +331,7 @@ function App() {
       await waitForIceGatheringComplete(peerConnection)
 
       const token = encodeSignal('offer', peerConnection.localDescription)
-      const nextInviteLink = `${appUrl}?offer=${encodeURIComponent(token)}`
+      const nextInviteLink = `${appUrl}?o=${encodeURIComponent(token.slice(2))}`
 
       setInviteLink(nextInviteLink)
       setResponseCode('')
@@ -498,8 +520,8 @@ function App() {
       setScannerTitle(mode === 'answer' ? 'Scan answer code' : 'Scan QR code')
       setScannerPrompt(
         mode === 'answer'
-          ? 'Point the camera at the answer QR shown on the second device.'
-          : 'Point the camera at the QR code on the other device.',
+          ? 'Hold the answer QR inside the frame on the second device.'
+          : 'Hold the QR code inside the frame on the other device.',
       )
       setScannerOpen(true)
 
@@ -590,7 +612,7 @@ function App() {
               {inviteLink ? (
                 <>
                   <h2>Invite QR</h2>
-                  <QRCodeSVG value={inviteLink} size={208} includeMargin level="M" />
+                  <QRCodeSVG value={inviteLink} size={176} level="L" />
                   <p className="card-copy">
                     Scan this on the other device to open the app with the pairing data.
                   </p>
@@ -621,7 +643,7 @@ function App() {
               ) : responseCode ? (
                 <>
                   <h2>Answer QR</h2>
-                  <QRCodeSVG value={responseCode} size={208} includeMargin level="M" />
+                  <QRCodeSVG value={responseCode} size={176} level="L" />
                   <p className="card-copy">
                     Show this back to the first device so it can finish the connection.
                   </p>
@@ -731,7 +753,11 @@ function App() {
           <div className="scanner-box scanner-modal">
             <h3>{scannerTitle}</h3>
             <p>{scannerPrompt}</p>
-            <video ref={videoRef} autoPlay muted playsInline />
+            <div className="scanner-preview">
+              <video ref={videoRef} autoPlay muted playsInline />
+              <div className="scanner-guide" aria-hidden="true" />
+            </div>
+            <p className="scanner-tip">Scanning starts automatically when a code is inside the frame.</p>
             <button type="button" className="button secondary" onClick={stopScanner}>
               Close scanner
             </button>
