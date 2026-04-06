@@ -133,6 +133,16 @@
   color: #bfd0ec;
 }
 
+.room-badge {
+  margin: -0.2rem 0 0.2rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.14);
+  color: #dbeafe;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
 .manual-panel textarea {
   width: 100%;
   min-height: 5.5rem;

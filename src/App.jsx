@@ -8,6 +8,25 @@ import './App.css'
 
 const CHUNK_SIZE = 16 * 1024
 const LOW_BUFFER_LIMIT = 256 * 1024
+const SIGNAL_POLL_MS = 1200
+const SIGNAL_WAIT_MS = 120000
+
+function normalizeRoomId(value = '') {
+  return value.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12).toUpperCase()
+}
+
+function extractRoomId(rawText) {
+  const value = rawText.trim()
+
+  if (!value) return ''
+
+  if (/^https?:\/\//i.test(value)) {
+    const url = new URL(value)
+    return normalizeRoomId(url.searchParams.get('room') ?? url.searchParams.get('r') ?? '')
+  }
+
+  return /^[A-Za-z0-9_-]{4,20}$/.test(value) ? normalizeRoomId(value) : ''
+}
 
 function formatBytes(bytes = 0) {
   if (!bytes) return '0 B'
@@ -122,6 +141,13 @@ function App() {
   const streamRef = useRef(null)
   const frameRef = useRef(null)
   const objectUrlsRef = useRef([])
+  const sessionTokenRef = useRef('')
+  const initialRoomFromUrl = (() => {
+    if (typeof window === 'undefined') return ''
+
+    const params = new URLSearchParams(window.location.search)
+    return normalizeRoomId(params.get('room') ?? params.get('r') ?? '')
+  })()
   const initialSignalFromUrl = (() => {
     if (typeof window === 'undefined') return ''
 
@@ -136,13 +162,16 @@ function App() {
   })()
 
   const [status, setStatus] = useState(
-    initialSignalFromUrl
-      ? 'Invite detected in the URL. Preparing the answer code…'
-      : 'Ready to pair two devices.',
+    initialRoomFromUrl
+      ? 'Room link detected. Fetching the invite from the signaling service…'
+      : initialSignalFromUrl
+        ? 'Invite detected in the URL. Preparing the answer code…'
+        : 'Ready to pair two devices.',
   )
   const [inviteLink, setInviteLink] = useState('')
   const [responseCode, setResponseCode] = useState('')
-  const [manualCode, setManualCode] = useState(initialSignalFromUrl)
+  const [roomCode, setRoomCode] = useState(initialRoomFromUrl)
+  const [manualCode, setManualCode] = useState(initialRoomFromUrl || initialSignalFromUrl)
   const [isConnected, setIsConnected] = useState(false)
   const [outgoingFiles, setOutgoingFiles] = useState([])
   const [incomingFiles, setIncomingFiles] = useState([])
@@ -155,8 +184,59 @@ function App() {
   const appUrl = typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}`
     : ''
+  const signalingUrl = (import.meta.env.VITE_SIGNALING_URL ?? '').replace(/\/$/, '')
+  const usesSignalServer = Boolean(signalingUrl)
 
   function addActivity() {}
+
+  async function requestRoomState(roomId, init = {}) {
+    if (!signalingUrl) {
+      throw new Error('Set `VITE_SIGNALING_URL` to enable short room links.')
+    }
+
+    const response = await fetch(`${signalingUrl}/rooms/${roomId}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(init.headers ?? {}),
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error('Could not reach the signaling service. Check the worker URL and CORS settings.')
+    }
+
+    return response.json()
+  }
+
+  async function waitForRoomDescription(roomId, field, sessionToken, waitMessage) {
+    if (waitMessage) {
+      setStatus(waitMessage)
+    }
+
+    const deadline = Date.now() + SIGNAL_WAIT_MS
+
+    while (Date.now() < deadline) {
+      if (sessionTokenRef.current !== sessionToken) {
+        return null
+      }
+
+      const room = await requestRoomState(roomId)
+      const description = room?.[field]?.description
+
+      if (description) {
+        return description
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, SIGNAL_POLL_MS))
+    }
+
+    throw new Error(
+      field === 'offer'
+        ? `Room ${roomId} is still waiting for the host invite.`
+        : `Room ${roomId} did not receive an answer in time.`,
+    )
+  }
 
   function stopScanner() {
     if (frameRef.current) {
@@ -174,6 +254,7 @@ function App() {
 
   function cleanupConnection() {
     stopScanner()
+    sessionTokenRef.current = ''
 
     if (channelRef.current) {
       channelRef.current.onopen = null
@@ -198,6 +279,7 @@ function App() {
     cleanupConnection()
     setInviteLink('')
     setResponseCode('')
+    setRoomCode('')
     setManualCode('')
     setStatus('Session reset. Create a new invite to pair again.')
     addActivity('Session reset.')
@@ -302,6 +384,9 @@ function App() {
   function createPeerConnection() {
     cleanupConnection()
 
+    const sessionToken = crypto.randomUUID()
+    sessionTokenRef.current = sessionToken
+
     const peerConnection = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     })
@@ -324,12 +409,55 @@ function App() {
       }
     }
 
-    return peerConnection
+    return { peerConnection, sessionToken }
   }
 
   async function createInvite() {
     try {
-      const peerConnection = createPeerConnection()
+      if (usesSignalServer) {
+        const roomId = normalizeRoomId(crypto.randomUUID().slice(0, 8))
+        const { peerConnection, sessionToken } = createPeerConnection()
+        const dataChannel = peerConnection.createDataChannel('files', { ordered: true })
+
+        attachDataChannel(dataChannel)
+        setRoomCode(roomId)
+        setInviteLink('')
+        setResponseCode('')
+        setManualCode(roomId)
+        setStatus('Creating a short room link…')
+
+        const offer = await peerConnection.createOffer()
+        await peerConnection.setLocalDescription(offer)
+        await waitForIceGatheringComplete(peerConnection)
+
+        await requestRoomState(roomId, {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'offer',
+            description: peerConnection.localDescription,
+          }),
+        })
+
+        const nextInviteLink = `${appUrl}?room=${encodeURIComponent(roomId)}`
+
+        setInviteLink(nextInviteLink)
+        setStatus(`Room ${roomId} is ready. Let the other device open the QR or short link.`)
+
+        const answerDescription = await waitForRoomDescription(
+          roomId,
+          'answer',
+          sessionToken,
+          `Waiting for the second device to join room ${roomId}…`,
+        )
+
+        if (answerDescription) {
+          await applyAnswer(answerDescription)
+        }
+
+        return
+      }
+
+      const { peerConnection } = createPeerConnection()
       const dataChannel = peerConnection.createDataChannel('files', { ordered: true })
 
       attachDataChannel(dataChannel)
@@ -352,8 +480,12 @@ function App() {
     }
   }
 
-  async function acceptInvite(description) {
-    const peerConnection = createPeerConnection()
+  async function acceptInvite(description, roomId = '') {
+    const { peerConnection } = createPeerConnection()
+
+    if (roomId) {
+      setRoomCode(roomId)
+    }
 
     await peerConnection.setRemoteDescription(new RTCSessionDescription(description))
 
@@ -361,12 +493,61 @@ function App() {
     await peerConnection.setLocalDescription(answer)
     await waitForIceGatheringComplete(peerConnection)
 
+    if (roomId && usesSignalServer) {
+      await requestRoomState(roomId, {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'answer',
+          description: peerConnection.localDescription,
+        }),
+      })
+
+      setInviteLink('')
+      setResponseCode('')
+      setStatus(`Answer sent through the signaling service for room ${roomId}. Finalizing direct connection…`)
+      return
+    }
+
     const token = encodeSignal('answer', peerConnection.localDescription)
 
     setResponseCode(token)
     setInviteLink('')
     setStatus('Answer code ready. Show this QR code back to the first device.')
     addActivity('Answer QR code generated for the host device.')
+  }
+
+  async function joinRoom(roomId) {
+    if (!usesSignalServer) {
+      throw new Error('This room link needs a signaling server. Set `VITE_SIGNALING_URL` before using short room codes.')
+    }
+
+    const normalizedRoomId = normalizeRoomId(roomId)
+
+    if (!normalizedRoomId) {
+      throw new Error('Paste a valid room code or room link first.')
+    }
+
+    const waitingToken = crypto.randomUUID()
+    sessionTokenRef.current = waitingToken
+    setRoomCode(normalizedRoomId)
+    setInviteLink('')
+    setResponseCode('')
+    setStatus(`Joining room ${normalizedRoomId}…`)
+
+    const room = await requestRoomState(normalizedRoomId)
+    const offerDescription =
+      room?.offer?.description ??
+      (await waitForRoomDescription(
+        normalizedRoomId,
+        'offer',
+        waitingToken,
+        `Waiting for the host to publish the invite in room ${normalizedRoomId}…`,
+      ))
+
+    if (!offerDescription) return
+
+    await acceptInvite(offerDescription, normalizedRoomId)
+    setManualCode('')
   }
 
   async function applyAnswer(description) {
@@ -401,6 +582,13 @@ function App() {
 
   async function handleManualConnect() {
     try {
+      const roomId = extractRoomId(manualCode)
+
+      if (roomId) {
+        await joinRoom(roomId)
+        return
+      }
+
       await applySignalText()
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'The pairing code was invalid.')
@@ -422,7 +610,9 @@ function App() {
     try {
       await navigator.share({
         title: 'PeerDrop Fileshare invite',
-        text: 'Open this link to pair directly for file sharing.',
+        text: usesSignalServer
+          ? 'Open this short room link to pair directly for file sharing.'
+          : 'Open this link to pair directly for file sharing.',
         url: inviteLink,
       })
     } catch {
@@ -578,6 +768,15 @@ function App() {
   }
 
   useEffect(() => {
+    if (initialRoomFromUrl) {
+      void joinRoom(initialRoomFromUrl).catch((error) => {
+        setStatus(error instanceof Error ? error.message : 'Could not join the room.')
+      })
+
+      window.history.replaceState({}, '', window.location.pathname)
+      return
+    }
+
     if (!initialSignalFromUrl) return
 
     void applySignalText(initialSignalFromUrl).catch((error) => {
@@ -586,7 +785,7 @@ function App() {
 
     window.history.replaceState({}, '', window.location.pathname)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialSignalFromUrl])
+  }, [initialRoomFromUrl, initialSignalFromUrl])
 
   useEffect(() => {
     const objectUrls = objectUrlsRef.current
@@ -606,7 +805,7 @@ function App() {
           <div className="inline-actions">
             {!isConnected ? (
               <button type="button" className="button" onClick={createInvite}>
-                Create QR
+                {usesSignalServer ? 'Create room' : 'Create QR'}
               </button>
             ) : null}
             <button type="button" className="button ghost" onClick={resetSession}>
@@ -621,9 +820,12 @@ function App() {
               {inviteLink ? (
                 <>
                   <h2>Invite QR</h2>
+                  {usesSignalServer && roomCode ? <p className="room-badge">Room {roomCode}</p> : null}
                   <QRCodeSVG value={inviteLink} size={176} level="L" />
                   <p className="card-copy">
-                    Scan this on the other device to open the app with the pairing data.
+                    {usesSignalServer
+                      ? 'Scan this on the other device to open the app with the short room link.'
+                      : 'Scan this on the other device to open the app with the pairing data.'}
                   </p>
                   <div className="inline-actions">
                     <button
@@ -633,7 +835,7 @@ function App() {
                     >
                       Copy invite link
                     </button>
-                    {canScanQr ? (
+                    {!usesSignalServer && canScanQr ? (
                       <button
                         type="button"
                         className="button secondary"
@@ -649,7 +851,7 @@ function App() {
                     ) : null}
                   </div>
                 </>
-              ) : responseCode ? (
+              ) : responseCode && !usesSignalServer ? (
                 <>
                   <h2>Answer QR</h2>
                   <QRCodeSVG value={responseCode} size={176} level="L" />
@@ -667,25 +869,33 @@ function App() {
               ) : (
                 <div className="empty-card">
                   <h2>Not connected</h2>
-                  <p>Create an invite to show a QR code, or paste an invite link below.</p>
+                  <p>
+                    {usesSignalServer
+                      ? 'Create a room to show a short QR link, or paste a room code below.'
+                      : 'Create an invite to show a QR code, or paste an invite link below.'}
+                  </p>
                 </div>
               )}
             </div>
 
             <div className="manual-panel">
-              <h3>Paste invite or answer</h3>
-              <p>Use this as a fallback if scanning is not available.</p>
+              <h3>{usesSignalServer ? 'Paste room link or code' : 'Paste invite or answer'}</h3>
+              <p>
+                {usesSignalServer
+                  ? 'You can also type the short room code instead of scanning the QR.'
+                  : 'Use this as a fallback if scanning is not available.'}
+              </p>
               <textarea
                 value={manualCode}
                 onChange={(event) => setManualCode(event.target.value)}
-                placeholder="Paste an invite link or answer code here"
+                placeholder={usesSignalServer ? 'Paste a room link or room code here' : 'Paste an invite link or answer code here'}
                 rows={4}
               />
               <div className="inline-actions">
                 <button type="button" className="button" onClick={handleManualConnect}>
                   Apply code
                 </button>
-                {canScanQr ? (
+                {!usesSignalServer && canScanQr ? (
                   <button
                     type="button"
                     className="button secondary"

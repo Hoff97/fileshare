@@ -1,45 +1,66 @@
 # PeerDrop Fileshare
 
-A small `React + Vite` PWA for **browser-only file sharing** with:
+A small `React + Vite` PWA for **direct browser-to-browser file sharing** with:
 
-- **WebRTC data channels** for direct file transfer
-- **QR-based manual signaling** for serverless pairing
+- **WebRTC data channels** for the actual file transfer
+- **short room links** via a tiny Cloudflare Worker signaling service
+- optional **manual QR fallback** when no signaling URL is configured
 - repeated sends in both directions after one successful pairing
 
 ## Run locally
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev:host
 ```
 
+Then set `VITE_SIGNALING_URL` in `.env.local` to your deployed Cloudflare Worker URL.
+
 > Use `dev:host` so a phone or second laptop on the same LAN can open the app.
 
-## Pairing flow
+## Pairing flow with the signaling worker
 
-1. Open the app on **device A** and tap **Create invite**.
-2. Scan the invite QR on **device B**. It opens the same app with the WebRTC offer in the URL.
-3. Device B generates an **answer QR**.
-4. On device A, either:
-   - use **Scan answer QR** inside the app, or
-   - paste the answer code manually.
-5. After the direct connection opens, both devices can send files as many times as they want during the session.
+1. Open the app on **device A** and tap **Create room**.
+2. A short QR code and **room code** are generated.
+3. On **device B**, open that room link or type the room code.
+4. The Cloudflare Worker exchanges the WebRTC offer/answer automatically.
+5. Once the direct connection opens, both devices can keep sending files in the same session.
 
-## Important limitation
+## Cloudflare Worker setup
 
-This app intentionally uses **no TURN relay** and no backend signaling server. That means:
+This repo includes a starter worker in `cloudflare/worker.js` and a sample `wrangler.toml`.
 
-- it works best on the **same LAN** or on permissive NAT setups
-- some restrictive networks may still block direct peer connectivity
-- Chromium-based browsers currently give the best results for QR scanning and WebRTC behavior
+### Deploy it
 
-## Deploy
+```bash
+npm install
+npx wrangler login
+npx wrangler deploy
+```
 
-Because the app is static, it can be hosted on:
+After deployment, copy the worker URL and set:
 
-- GitHub Pages
-- Netlify
-- Vercel
-- any static web server
+```bash
+VITE_SIGNALING_URL=https://your-worker-subdomain.workers.dev
+```
 
-Once deployed, the invite QR will point to the hosted app URL with the compressed pairing offer attached.
+## GitHub Pages deployment
+
+The GitHub Actions workflow now deploys the Cloudflare Worker automatically before building the site.
+
+### Required secret
+
+- `CLOUDFLARE_TOKEN` — API token with permission to deploy Workers
+
+### Optional variable if Cloudflare asks for it
+
+- `CLOUDFLARE_ACCOUNT_ID` — only needed if Wrangler reports that no account ID was found
+
+Keep **Pages → Source = GitHub Actions** enabled.
+
+## Important note
+
+The worker is only used for **signaling**. The actual file bytes still go directly over **WebRTC P2P**.
+
+A TURN relay is still not configured, so very restrictive networks may block direct peer connectivity.

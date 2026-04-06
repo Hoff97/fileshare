@@ -16,7 +16,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  deploy-worker:
+    runs-on: ubuntu-latest
+    outputs:
+      signaling_url: ${{ steps.cloudflare.outputs.deployment-url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy Cloudflare Worker
+        id: cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
   build:
+    needs: deploy-worker
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,6 +52,8 @@ jobs:
         run: npm ci
 
       - name: Build site
+        env:
+          VITE_SIGNALING_URL: ${{ needs.deploy-worker.outputs.signaling_url }}
         run: npm run build
 
       - name: Upload Pages artifact
