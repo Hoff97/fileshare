@@ -4,6 +4,7 @@ import {
   compressToEncodedURIComponent,
   decompressFromEncodedURIComponent,
 } from 'lz-string'
+import { consumeSharedFiles } from './shareTargetStore'
 import './App.css'
 
 const CHUNK_SIZE = 16 * 1024
@@ -13,6 +14,19 @@ const SIGNAL_WAIT_MS = 120000
 
 function normalizeRoomId(value = '') {
   return value.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12).toUpperCase()
+}
+
+function extractRoomId(rawText = '') {
+  const value = rawText.trim()
+
+  if (!value) return ''
+
+  if (/^https?:\/\//i.test(value)) {
+    const url = new URL(value)
+    return normalizeRoomId(url.searchParams.get('room') ?? url.searchParams.get('r') ?? '')
+  }
+
+  return normalizeRoomId(value)
 }
 
 function formatBytes(bytes = 0) {
@@ -129,6 +143,11 @@ function App() {
   const frameRef = useRef(null)
   const objectUrlsRef = useRef([])
   const sessionTokenRef = useRef('')
+  const autoInviteRequestedRef = useRef(false)
+  const initialShareTargetLaunch = (() => {
+    if (typeof window === 'undefined') return false
+    return new URLSearchParams(window.location.search).has('share-target')
+  })()
   const initialRoomFromUrl = (() => {
     if (typeof window === 'undefined') return ''
 
@@ -149,15 +168,18 @@ function App() {
   })()
 
   const [status, setStatus] = useState(
-    initialRoomFromUrl
-      ? 'Room link detected. Fetching the invite from the signaling service…'
-      : initialSignalFromUrl
-        ? 'Invite detected in the URL. Preparing the answer code…'
-        : 'Ready to pair two devices.',
+    initialShareTargetLaunch
+      ? 'Shared files received. Preparing a room…'
+      : initialRoomFromUrl
+        ? 'Room link detected. Fetching the invite from the signaling service…'
+        : initialSignalFromUrl
+          ? 'Invite detected in the URL. Preparing the answer code…'
+          : 'Ready to pair two devices.',
   )
   const [inviteLink, setInviteLink] = useState('')
   const [responseCode, setResponseCode] = useState('')
   const [roomCode, setRoomCode] = useState(initialRoomFromUrl)
+  const [pendingSharedFiles, setPendingSharedFiles] = useState([])
   const [isConnected, setIsConnected] = useState(false)
   const [outgoingFiles, setOutgoingFiles] = useState([])
   const [incomingFiles, setIncomingFiles] = useState([])
@@ -263,10 +285,15 @@ function App() {
 
   function resetSession() {
     cleanupConnection()
+    autoInviteRequestedRef.current = false
     setInviteLink('')
     setResponseCode('')
     setRoomCode('')
-    setStatus('Session reset. Create a new invite to pair again.')
+    setStatus(
+      pendingSharedFiles.length
+        ? 'Session reset. Shared files are still queued and a new room can be created.'
+        : 'Session reset. Create a new invite to pair again.',
+    )
     addActivity('Session reset.')
   }
 
@@ -711,7 +738,7 @@ function App() {
           stopScanner()
 
           try {
-            const roomId = usesSignalServer ? normalizeRoomId(match.rawValue) : ''
+            const roomId = usesSignalServer ? extractRoomId(match.rawValue) : ''
 
             if (roomId) {
               await joinRoom(roomId)
@@ -738,6 +765,29 @@ function App() {
   }
 
   useEffect(() => {
+    if (initialShareTargetLaunch) {
+      void consumeSharedFiles()
+        .then((files) => {
+          if (!files.length) {
+            setStatus('No shared files were attached. Create a room to start sharing.')
+            return
+          }
+
+          setPendingSharedFiles(files)
+          setStatus(
+            usesSignalServer
+              ? `Loaded ${files.length} shared file(s). Creating a room…`
+              : `Loaded ${files.length} shared file(s). Creating an invite…`,
+          )
+        })
+        .catch(() => {
+          setStatus('Could not load the shared files from the share target.')
+        })
+
+      window.history.replaceState({}, '', window.location.pathname)
+      return
+    }
+
     if (initialRoomFromUrl) {
       void joinRoom(initialRoomFromUrl).catch((error) => {
         setStatus(error instanceof Error ? error.message : 'Could not join the room.')
@@ -755,7 +805,41 @@ function App() {
 
     window.history.replaceState({}, '', window.location.pathname)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialRoomFromUrl, initialSignalFromUrl])
+  }, [initialRoomFromUrl, initialShareTargetLaunch, initialSignalFromUrl, usesSignalServer])
+
+  useEffect(() => {
+    if (
+      !pendingSharedFiles.length ||
+      inviteLink ||
+      isConnected ||
+      peerConnectionRef.current ||
+      autoInviteRequestedRef.current
+    ) {
+      return
+    }
+
+    autoInviteRequestedRef.current = true
+    void createInvite()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSharedFiles.length, inviteLink, isConnected])
+
+  useEffect(() => {
+    if (!isConnected || !pendingSharedFiles.length) {
+      return
+    }
+
+    const filesToSend = pendingSharedFiles
+    setPendingSharedFiles([])
+    setStatus(`Peer connected. Sending ${filesToSend.length} shared file(s)…`)
+
+    sendQueueRef.current = sendQueueRef.current
+      .then(() => sendFiles(filesToSend))
+      .catch(() => {
+        setStatus('One of the shared files could not be sent.')
+        setPendingSharedFiles(filesToSend)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, pendingSharedFiles])
 
   useEffect(() => {
     const objectUrls = objectUrlsRef.current
@@ -797,6 +881,11 @@ function App() {
                       ? 'Scan this on the other device to open the app with the short room link.'
                       : 'Scan this on the other device to open the app with the pairing data.'}
                   </p>
+                  {pendingSharedFiles.length ? (
+                    <p className="queued-badge">
+                      {pendingSharedFiles.length} shared file{pendingSharedFiles.length === 1 ? '' : 's'} queued — they will send automatically when the peer joins.
+                    </p>
+                  ) : null}
                   <div className="inline-actions">
                     <button
                       type="button"
@@ -840,9 +929,11 @@ function App() {
                 <div className="empty-card">
                   <h2>Not connected</h2>
                   <p>
-                    {usesSignalServer
-                      ? 'Create a room to show a short QR link, or paste a room code below.'
-                      : 'Create an invite to show a QR code, or paste an invite link below.'}
+                    {pendingSharedFiles.length
+                      ? 'Your shared files are queued. A room will be created automatically so someone else can join and receive them.'
+                      : usesSignalServer
+                        ? 'Create a room to show a short QR link for the other device.'
+                        : 'Create an invite to show a QR code for the other device.'}
                   </p>
                 </div>
               )}

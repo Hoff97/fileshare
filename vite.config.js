@@ -12,6 +12,9 @@ export default defineConfig(() => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.js',
         includeAssets: ['favicon.svg', 'pwa-icon.svg'],
         manifest: {
           name: 'PeerDrop Fileshare',
@@ -22,6 +25,19 @@ export default defineConfig(() => {
           display: 'standalone',
           start_url: '.',
           scope: '.',
+          share_target: {
+            action: './?share-target=1',
+            method: 'POST',
+            enctype: 'multipart/form-data',
+            params: {
+              files: [
+                {
+                  name: 'files',
+                  accept: ['*/*'],
+                },
+              ],
+            },
+          },
           icons: [
             {
               src: 'pwa-icon.svg',
@@ -37,11 +53,12 @@ export default defineConfig(() => {
             },
           ],
         },
-        workbox: {
+        injectManifest: {
           globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
         },
         devOptions: {
           enabled: true,
+          type: 'module',
         },
       }),
     ],
