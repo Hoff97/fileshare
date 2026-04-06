@@ -15,19 +15,6 @@ function normalizeRoomId(value = '') {
   return value.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12).toUpperCase()
 }
 
-function extractRoomId(rawText) {
-  const value = rawText.trim()
-
-  if (!value) return ''
-
-  if (/^https?:\/\//i.test(value)) {
-    const url = new URL(value)
-    return normalizeRoomId(url.searchParams.get('room') ?? url.searchParams.get('r') ?? '')
-  }
-
-  return /^[A-Za-z0-9_-]{4,20}$/.test(value) ? normalizeRoomId(value) : ''
-}
-
 function formatBytes(bytes = 0) {
   if (!bytes) return '0 B'
 
@@ -171,7 +158,6 @@ function App() {
   const [inviteLink, setInviteLink] = useState('')
   const [responseCode, setResponseCode] = useState('')
   const [roomCode, setRoomCode] = useState(initialRoomFromUrl)
-  const [manualCode, setManualCode] = useState(initialRoomFromUrl || initialSignalFromUrl)
   const [isConnected, setIsConnected] = useState(false)
   const [outgoingFiles, setOutgoingFiles] = useState([])
   const [incomingFiles, setIncomingFiles] = useState([])
@@ -280,7 +266,6 @@ function App() {
     setInviteLink('')
     setResponseCode('')
     setRoomCode('')
-    setManualCode('')
     setStatus('Session reset. Create a new invite to pair again.')
     addActivity('Session reset.')
   }
@@ -423,7 +408,6 @@ function App() {
         setRoomCode(roomId)
         setInviteLink('')
         setResponseCode('')
-        setManualCode(roomId)
         setStatus('Creating a short room link…')
 
         const offer = await peerConnection.createOffer()
@@ -472,7 +456,6 @@ function App() {
 
       setInviteLink(nextInviteLink)
       setResponseCode('')
-      setManualCode('')
       setStatus('Invite ready. Scan it on the second device, then return the answer code.')
       addActivity('Invite QR code generated.')
     } catch (error) {
@@ -524,7 +507,7 @@ function App() {
     const normalizedRoomId = normalizeRoomId(roomId)
 
     if (!normalizedRoomId) {
-      throw new Error('Paste a valid room code or room link first.')
+      throw new Error('Open a valid room link or scan the invite QR first.')
     }
 
     const waitingToken = crypto.randomUUID()
@@ -547,7 +530,6 @@ function App() {
     if (!offerDescription) return
 
     await acceptInvite(offerDescription, normalizedRoomId)
-    setManualCode('')
   }
 
   async function applyAnswer(description) {
@@ -562,37 +544,20 @@ function App() {
     addActivity('Answer code accepted by the first device.')
   }
 
-  async function applySignalText(rawText = manualCode) {
+  async function applySignalText(rawText) {
     const { kind, description } = decodeSignal(rawText)
 
     if (kind === 'offer') {
       await acceptInvite(description)
-      setManualCode('')
       return
     }
 
     if (kind === 'answer') {
       await applyAnswer(description)
-      setManualCode('')
       return
     }
 
     throw new Error('Unknown pairing code format.')
-  }
-
-  async function handleManualConnect() {
-    try {
-      const roomId = extractRoomId(manualCode)
-
-      if (roomId) {
-        await joinRoom(roomId)
-        return
-      }
-
-      await applySignalText()
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'The pairing code was invalid.')
-    }
   }
 
   async function copyText(text, successMessage) {
@@ -744,10 +709,15 @@ function App() {
 
         if (match?.rawValue) {
           stopScanner()
-          setManualCode(match.rawValue)
 
           try {
-            await applySignalText(match.rawValue)
+            const roomId = usesSignalServer ? normalizeRoomId(match.rawValue) : ''
+
+            if (roomId) {
+              await joinRoom(roomId)
+            } else {
+              await applySignalText(match.rawValue)
+            }
           } catch (error) {
             setStatus(error instanceof Error ? error.message : 'The scanned code was invalid.')
           }
@@ -878,35 +848,7 @@ function App() {
               )}
             </div>
 
-            <div className="manual-panel">
-              <h3>{usesSignalServer ? 'Paste room link or code' : 'Paste invite or answer'}</h3>
-              <p>
-                {usesSignalServer
-                  ? 'You can also type the short room code instead of scanning the QR.'
-                  : 'Use this as a fallback if scanning is not available.'}
-              </p>
-              <textarea
-                value={manualCode}
-                onChange={(event) => setManualCode(event.target.value)}
-                placeholder={usesSignalServer ? 'Paste a room link or room code here' : 'Paste an invite link or answer code here'}
-                rows={4}
-              />
-              <div className="inline-actions">
-                <button type="button" className="button" onClick={handleManualConnect}>
-                  Apply code
-                </button>
-                {!usesSignalServer && canScanQr ? (
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => startScanner(inviteLink ? 'answer' : 'pair')}
-                  >
-                    Use camera
-                  </button>
-                ) : null}
-              </div>
-              {scannerError ? <p className="warning-text">{scannerError}</p> : null}
-            </div>
+            {scannerError ? <p className="warning-text standalone-warning">{scannerError}</p> : null}
           </div>
         ) : (
           <div className="files-view">
