@@ -172,6 +172,21 @@ function updateTransferItems(items, id, patch) {
   return nextItems
 }
 
+function triggerDownload(url, filename) {
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename || 'download'
+  link.rel = 'noopener'
+  link.style.display = 'none'
+  document.body.append(link)
+  link.click()
+  link.remove()
+}
+
 function App() {
   const peerConnectionRef = useRef(null)
   const channelRef = useRef(null)
@@ -386,16 +401,17 @@ function App() {
         objectUrlsRef.current.push(url)
         incomingRef.current.files.delete(payload.id)
         incomingRef.current.currentId = null
+        triggerDownload(url, entry.name)
 
         setIncomingFiles((current) =>
           updateTransferItems(current, payload.id, {
             progress: 100,
-            status: 'Ready to download',
+            status: 'Downloaded automatically',
             url,
           }),
         )
 
-        addActivity(`Received ${entry.name} (${formatBytes(entry.size)}).`)
+        addActivity(`Received ${entry.name} (${formatBytes(entry.size)}) and started the download.`)
       }
 
       return
