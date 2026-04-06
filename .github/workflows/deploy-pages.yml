@@ -32,6 +32,22 @@ jobs:
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
 
+      - name: Wait for worker HTTPS endpoint
+        env:
+          SIGNALING_URL: ${{ steps.cloudflare.outputs.deployment-url }}
+        run: |
+          echo "Waiting for ${SIGNALING_URL} to become reachable..."
+          for attempt in {1..18}; do
+            if curl --silent --show-error --fail "${SIGNALING_URL}/rooms/HEALTHCHECK" >/dev/null; then
+              echo "Worker is reachable."
+              exit 0
+            fi
+            echo "Not ready yet (${attempt}/18), retrying in 10s..."
+            sleep 10
+          done
+          echo "Worker endpoint did not become ready in time." >&2
+          exit 1
+
   build:
     needs: deploy-worker
     runs-on: ubuntu-latest
