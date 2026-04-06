@@ -189,6 +189,7 @@ function App() {
   const [scannerPrompt, setScannerPrompt] = useState('Point the camera at the QR code on the other device.')
 
   const canScanQr = typeof window !== 'undefined' && 'BarcodeDetector' in window
+  const isShareTargetCapable = typeof navigator !== 'undefined' && 'serviceWorker' in navigator
   const appUrl = typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}`
     : ''
@@ -855,7 +856,12 @@ function App() {
     <div className="app-shell">
       <section className="panel top-panel">
         <div className="top-bar">
-          <div className={`status-pill ${isConnected ? 'connected' : ''}`}>{status}</div>
+          <div className="status-stack">
+            <div className={`status-pill ${isConnected ? 'connected' : ''}`}>{status}</div>
+            <div className={`share-target-pill ${isShareTargetCapable ? 'ready' : ''}`}>
+              {isShareTargetCapable ? 'Share target ready' : 'Share target unavailable'}
+            </div>
+          </div>
           <div className="inline-actions">
             {!isConnected ? (
               <button type="button" className="button" onClick={createInvite}>

@@ -22,6 +22,11 @@
   margin-bottom: 1rem;
 }
 
+.status-stack {
+  display: grid;
+  gap: 0.45rem;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -35,6 +40,22 @@
 .status-pill.connected {
   background: rgba(16, 185, 129, 0.18);
   color: #d1fae5;
+}
+
+.share-target-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.82rem;
+  background: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+}
+
+.share-target-pill.ready {
+  background: rgba(56, 189, 248, 0.14);
+  color: #dbeafe;
 }
 
 .connect-layout {
