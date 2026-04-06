@@ -122,18 +122,27 @@ function App() {
   const streamRef = useRef(null)
   const frameRef = useRef(null)
   const objectUrlsRef = useRef([])
-  const initialOfferFromUrl = typeof window !== 'undefined'
-    ? new URLSearchParams(window.location.search).get('offer') ?? ''
-    : ''
+  const initialSignalFromUrl = (() => {
+    if (typeof window === 'undefined') return ''
+
+    const params = new URLSearchParams(window.location.search)
+    return (
+      params.get('o') ??
+      params.get('offer') ??
+      params.get('a') ??
+      params.get('answer') ??
+      ''
+    )
+  })()
 
   const [status, setStatus] = useState(
-    initialOfferFromUrl
+    initialSignalFromUrl
       ? 'Invite detected in the URL. Preparing the answer code…'
       : 'Ready to pair two devices.',
   )
   const [inviteLink, setInviteLink] = useState('')
   const [responseCode, setResponseCode] = useState('')
-  const [manualCode, setManualCode] = useState(initialOfferFromUrl)
+  const [manualCode, setManualCode] = useState(initialSignalFromUrl)
   const [isConnected, setIsConnected] = useState(false)
   const [outgoingFiles, setOutgoingFiles] = useState([])
   const [incomingFiles, setIncomingFiles] = useState([])
@@ -569,15 +578,15 @@ function App() {
   }
 
   useEffect(() => {
-    if (!initialOfferFromUrl) return
+    if (!initialSignalFromUrl) return
 
-    void applySignalText(initialOfferFromUrl).catch((error) => {
+    void applySignalText(initialSignalFromUrl).catch((error) => {
       setStatus(error instanceof Error ? error.message : 'Could not accept the invite.')
     })
 
     window.history.replaceState({}, '', window.location.pathname)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialOfferFromUrl])
+  }, [initialSignalFromUrl])
 
   useEffect(() => {
     const objectUrls = objectUrlsRef.current
