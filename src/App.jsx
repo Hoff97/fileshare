@@ -39,6 +39,45 @@ function formatBytes(bytes = 0) {
   return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`
 }
 
+function getDeviceName() {
+  if (typeof navigator === 'undefined') {
+    return 'Another device'
+  }
+
+  const userAgent = navigator.userAgent ?? ''
+  const platform = navigator.userAgentData?.platform ?? navigator.platform ?? ''
+
+  let device = 'Unknown device'
+
+  if (/iPhone/i.test(userAgent)) {
+    device = 'iPhone'
+  } else if (/iPad/i.test(userAgent)) {
+    device = 'iPad'
+  } else if (/Android/i.test(userAgent)) {
+    device = /Mobile/i.test(userAgent) ? 'Android phone' : 'Android tablet'
+  } else if (/Mac/i.test(platform)) {
+    device = 'Mac'
+  } else if (/Win/i.test(platform)) {
+    device = 'Windows PC'
+  } else if (/Linux/i.test(platform)) {
+    device = 'Linux device'
+  }
+
+  let browser = 'Browser'
+
+  if (/Edg\//i.test(userAgent)) {
+    browser = 'Edge'
+  } else if (/Firefox\//i.test(userAgent)) {
+    browser = 'Firefox'
+  } else if (/Chrome\//i.test(userAgent)) {
+    browser = 'Chrome'
+  } else if (/Safari\//i.test(userAgent)) {
+    browser = 'Safari'
+  }
+
+  return `${device} · ${browser}`
+}
+
 function encodeSignal(kind, description) {
   const marker = kind === 'answer' ? 'a' : 'o'
   const compactDescription = `${marker}${description.sdp.replace(/\r\n/g, '\n')}`
@@ -187,6 +226,7 @@ function App() {
   const [scannerError, setScannerError] = useState('')
   const [scannerTitle, setScannerTitle] = useState('Scan QR code')
   const [scannerPrompt, setScannerPrompt] = useState('Point the camera at the QR code on the other device.')
+  const [pendingApproval, setPendingApproval] = useState(null)
   const [shareTargetState, setShareTargetState] = useState(() => ({
     tone: typeof navigator !== 'undefined' && 'serviceWorker' in navigator ? 'checking' : 'unsupported',
     label:
@@ -196,6 +236,7 @@ function App() {
   }))
 
   const canScanQr = typeof window !== 'undefined' && 'BarcodeDetector' in window
+  const localDeviceName = getDeviceName()
   const appUrl = typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}`
     : ''
@@ -221,6 +262,10 @@ function App() {
       throw new Error('Could not reach the signaling service. Check the worker URL and CORS settings.')
     }
 
+    if (response.status === 204) {
+      return null
+    }
+
     return response.json()
   }
 
@@ -236,11 +281,10 @@ function App() {
         return null
       }
 
-      const room = await requestRoomState(roomId)
-      const description = room?.[field]?.description
+      const entry = (await requestRoomState(roomId))?.[field]
 
-      if (description) {
-        return description
+      if (entry?.description) {
+        return entry
       }
 
       await new Promise((resolve) => window.setTimeout(resolve, SIGNAL_POLL_MS))
@@ -270,6 +314,7 @@ function App() {
   function cleanupConnection() {
     stopScanner()
     sessionTokenRef.current = ''
+    setPendingApproval(null)
 
     if (channelRef.current) {
       channelRef.current.onopen = null
@@ -461,15 +506,22 @@ function App() {
         setInviteLink(nextInviteLink)
         setStatus(`Room ${roomId} is ready. Let the other device open the QR or short link.`)
 
-        const answerDescription = await waitForRoomDescription(
+        const answerEntry = await waitForRoomDescription(
           roomId,
           'answer',
           sessionToken,
           `Waiting for the second device to join room ${roomId}…`,
         )
 
-        if (answerDescription) {
-          await applyAnswer(answerDescription)
+        if (answerEntry?.description) {
+          const requesterName = answerEntry.deviceName?.trim() || 'Another device'
+
+          setPendingApproval({
+            roomId,
+            description: answerEntry.description,
+            deviceName: requesterName,
+          })
+          setStatus(`${requesterName} wants to join room ${roomId}. Approve this connection to continue.`)
         }
 
         return
@@ -516,12 +568,13 @@ function App() {
         body: JSON.stringify({
           type: 'answer',
           description: peerConnection.localDescription,
+          deviceName: localDeviceName,
         }),
       })
 
       setInviteLink('')
       setResponseCode('')
-      setStatus(`Answer sent through the signaling service for room ${roomId}. Finalizing direct connection…`)
+      setStatus(`Connection request sent as ${localDeviceName}. Waiting for approval on the other device…`)
       return
     }
 
@@ -552,8 +605,8 @@ function App() {
     setStatus(`Joining room ${normalizedRoomId}…`)
 
     const room = await requestRoomState(normalizedRoomId)
-    const offerDescription =
-      room?.offer?.description ??
+    const offerEntry =
+      room?.offer ??
       (await waitForRoomDescription(
         normalizedRoomId,
         'offer',
@@ -561,9 +614,9 @@ function App() {
         `Waiting for the host to publish the invite in room ${normalizedRoomId}…`,
       ))
 
-    if (!offerDescription) return
+    if (!offerEntry?.description) return
 
-    await acceptInvite(offerDescription, normalizedRoomId)
+    await acceptInvite(offerEntry.description, normalizedRoomId)
   }
 
   async function applyAnswer(description) {
@@ -576,6 +629,42 @@ function App() {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(description))
     setStatus('Answer accepted. Finalizing the direct connection…')
     addActivity('Answer code accepted by the first device.')
+  }
+
+  async function approvePendingConnection() {
+    if (!pendingApproval?.description) {
+      return
+    }
+
+    const { description, deviceName } = pendingApproval
+    setPendingApproval(null)
+    setStatus(`Approved ${deviceName}. Finalizing the direct connection…`)
+    await applyAnswer(description)
+  }
+
+  async function declinePendingConnection() {
+    const currentApproval = pendingApproval
+
+    if (!currentApproval) {
+      return
+    }
+
+    setPendingApproval(null)
+    cleanupConnection()
+    autoInviteRequestedRef.current = false
+    setInviteLink('')
+    setResponseCode('')
+    setRoomCode('')
+
+    if (usesSignalServer && currentApproval.roomId) {
+      try {
+        await requestRoomState(currentApproval.roomId, { method: 'DELETE' })
+      } catch {
+        // Ignore worker cleanup failures after a declined request.
+      }
+    }
+
+    setStatus(`Declined connection from ${currentApproval.deviceName}. Create a new room to try again.`)
   }
 
   async function applySignalText(rawText) {
@@ -1090,6 +1179,29 @@ function App() {
             <button type="button" className="button secondary" onClick={stopScanner}>
               Close scanner
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingApproval ? (
+        <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label="Approve connection">
+          <div className="scanner-box verification-modal">
+            <h3>Approve connection?</h3>
+            <p>
+              <strong className="verification-device">{pendingApproval.deviceName}</strong> wants to join
+              {pendingApproval.roomId ? ` room ${pendingApproval.roomId}` : ' this session'}.
+            </p>
+            <p className="scanner-tip">
+              Only approve this if you trust the device and expected the pairing request.
+            </p>
+            <div className="inline-actions">
+              <button type="button" className="button" onClick={approvePendingConnection}>
+                Approve
+              </button>
+              <button type="button" className="button ghost" onClick={declinePendingConnection}>
+                Decline
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

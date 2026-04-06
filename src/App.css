@@ -141,6 +141,14 @@
   width: min(100%, 420px);
 }
 
+.verification-modal {
+  width: min(100%, 430px);
+}
+
+.verification-device {
+  color: #f8fafc;
+}
+
 .connect-card {
   place-items: center;
   text-align: center;

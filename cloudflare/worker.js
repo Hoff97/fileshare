@@ -69,6 +69,8 @@ export class RoomCoordinator {
         ...room,
         [body.type]: {
           description: body.description,
+          deviceName:
+            typeof body.deviceName === 'string' ? body.deviceName.trim().slice(0, 80) : '',
           updatedAt: Date.now(),
         },
         updatedAt: Date.now(),
