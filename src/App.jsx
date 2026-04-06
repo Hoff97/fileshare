@@ -115,9 +115,6 @@ function App() {
   const [isConnected, setIsConnected] = useState(false)
   const [outgoingFiles, setOutgoingFiles] = useState([])
   const [incomingFiles, setIncomingFiles] = useState([])
-  const [activity, setActivity] = useState([
-    'Tap “Create invite” on device A, then scan it from device B.',
-  ])
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState('')
 
@@ -126,9 +123,7 @@ function App() {
     ? `${window.location.origin}${window.location.pathname}`
     : ''
 
-  function addActivity(message) {
-    setActivity((current) => [message, ...current].slice(0, 8))
-  }
+  function addActivity() {}
 
   function stopScanner() {
     if (frameRef.current) {
@@ -566,200 +561,156 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="hero-card">
-        <div>
-          <p className="eyebrow">PWA · WebRTC · QR pairing</p>
-          <h1>PeerDrop Fileshare</h1>
-          <p className="lead">
-            Share files directly between two browsers with no app server. Pair once,
-            then both devices can keep sending files in the same session.
-          </p>
-        </div>
-        <div className="hero-badges">
-          <span>Installable PWA</span>
-          <span>Direct data channel</span>
-          <span>Manual fallback</span>
-        </div>
-      </header>
-
-      <main className="main-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <h2>1. Pair the devices</h2>
-              <p>Device A creates the invite. Device B scans it and returns the answer QR.</p>
-            </div>
-            <button type="button" className="button" onClick={createInvite}>
-              Create invite
+      <section className="panel top-panel">
+        <div className="top-bar">
+          <div className={`status-pill ${isConnected ? 'connected' : ''}`}>{status}</div>
+          <div className="inline-actions">
+            {!isConnected ? (
+              <button type="button" className="button" onClick={createInvite}>
+                Create QR
+              </button>
+            ) : null}
+            <button type="button" className="button ghost" onClick={resetSession}>
+              {isConnected ? 'Disconnect' : 'Reset'}
             </button>
           </div>
+        </div>
 
-          <div className={`status-pill ${isConnected ? 'connected' : ''}`}>{status}</div>
+        {!isConnected ? (
+          <div className="connect-layout">
+            <div className="qr-card connect-card">
+              {inviteLink ? (
+                <>
+                  <h2>Invite QR</h2>
+                  <QRCodeSVG value={inviteLink} size={208} includeMargin level="M" />
+                  <p className="card-copy">
+                    Scan this on the other device to open the app with the pairing data.
+                  </p>
+                  <div className="inline-actions">
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => copyText(inviteLink, 'Invite link copied to the clipboard.')}
+                    >
+                      Copy invite link
+                    </button>
+                    {navigator.share ? (
+                      <button type="button" className="button secondary" onClick={shareInvite}>
+                        Share invite
+                      </button>
+                    ) : null}
+                  </div>
+                </>
+              ) : responseCode ? (
+                <>
+                  <h2>Answer QR</h2>
+                  <QRCodeSVG value={responseCode} size={208} includeMargin level="M" />
+                  <p className="card-copy">
+                    Show this back to the first device so it can finish the connection.
+                  </p>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => copyText(responseCode, 'Answer code copied to the clipboard.')}
+                  >
+                    Copy answer code
+                  </button>
+                </>
+              ) : (
+                <div className="empty-card">
+                  <h2>Not connected</h2>
+                  <p>Create an invite to show a QR code, or paste an invite link below.</p>
+                </div>
+              )}
+            </div>
 
-          {inviteLink ? (
-            <div className="qr-card">
-              <h3>Invite QR for device B</h3>
-              <QRCodeSVG value={inviteLink} size={188} includeMargin level="M" />
-              <p className="card-copy">
-                Scan this with the second device’s camera to open the app with the WebRTC offer.
-              </p>
+            <div className="manual-panel">
+              <h3>Paste invite or answer</h3>
+              <p>Use this as a fallback if scanning is not available.</p>
+              <textarea
+                value={manualCode}
+                onChange={(event) => setManualCode(event.target.value)}
+                placeholder="Paste an invite link or answer code here"
+                rows={4}
+              />
               <div className="inline-actions">
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => copyText(inviteLink, 'Invite link copied to the clipboard.')}
-                >
-                  Copy invite link
+                <button type="button" className="button" onClick={handleManualConnect}>
+                  Apply code
                 </button>
-                {navigator.share ? (
-                  <button type="button" className="button secondary" onClick={shareInvite}>
-                    Share invite
+                {canScanQr ? (
+                  <button type="button" className="button secondary" onClick={startScanner}>
+                    Scan QR
                   </button>
                 ) : null}
               </div>
-            </div>
-          ) : null}
-
-          {responseCode ? (
-            <div className="qr-card accent-card">
-              <h3>Answer QR for device A</h3>
-              <QRCodeSVG value={responseCode} size={188} includeMargin level="M" />
-              <p className="card-copy">
-                Show this to the first device. It can scan the QR in-app or paste the code below.
-              </p>
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => copyText(responseCode, 'Answer code copied to the clipboard.')}
-              >
-                Copy answer code
-              </button>
-            </div>
-          ) : null}
-
-          <div className="manual-panel">
-            <h3>Manual fallback</h3>
-            <p>
-              Paste either the invite link from device A or the answer code from device B.
-            </p>
-            <textarea
-              value={manualCode}
-              onChange={(event) => setManualCode(event.target.value)}
-              placeholder="Paste an invite link or answer code here"
-              rows={4}
-            />
-            <div className="inline-actions">
-              <button type="button" className="button" onClick={handleManualConnect}>
-                Apply code
-              </button>
-              {canScanQr ? (
-                <button type="button" className="button secondary" onClick={startScanner}>
-                  Scan answer QR
-                </button>
+              {scannerError ? <p className="warning-text">{scannerError}</p> : null}
+              {scannerOpen ? (
+                <div className="scanner-box">
+                  <video ref={videoRef} autoPlay muted playsInline />
+                  <button type="button" className="button secondary" onClick={stopScanner}>
+                    Stop camera
+                  </button>
+                </div>
               ) : null}
-              <button type="button" className="button ghost" onClick={resetSession}>
-                Reset session
-              </button>
-            </div>
-            {scannerError ? <p className="warning-text">{scannerError}</p> : null}
-            {scannerOpen ? (
-              <div className="scanner-box">
-                <video ref={videoRef} autoPlay muted playsInline />
-                <button type="button" className="button secondary" onClick={stopScanner}>
-                  Stop camera
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <h2>2. Send files both ways</h2>
-              <p>Once connected, the same direct session can be reused for unlimited sends.</p>
             </div>
           </div>
+        ) : (
+          <div className="files-view">
+            <label className="dropzone">
+              <input type="file" multiple onChange={handleFileSelection} />
+              <span>Choose or drop files to send</span>
+            </label>
 
-          <label className={`dropzone ${isConnected ? '' : 'disabled'}`}>
-            <input type="file" multiple disabled={!isConnected} onChange={handleFileSelection} />
-            <span>{isConnected ? 'Choose or drop files to send' : 'Pair devices first'}</span>
-          </label>
-
-          <div className="transfer-grid">
-            <div>
-              <h3>Outgoing</h3>
-              <div className="transfer-list">
-                {outgoingFiles.length ? (
-                  outgoingFiles.map((file) => (
-                    <article className="transfer-item" key={file.id}>
-                      <div>
-                        <strong>{file.name}</strong>
-                        <p>
-                          {formatBytes(file.size)} · {file.status}
-                        </p>
-                      </div>
-                      <progress max="100" value={file.progress ?? 0} />
-                    </article>
-                  ))
-                ) : (
-                  <p className="empty-state">Nothing sent yet.</p>
-                )}
+            <div className="transfer-grid">
+              <div>
+                <h3>Sent</h3>
+                <div className="transfer-list">
+                  {outgoingFiles.length ? (
+                    outgoingFiles.map((file) => (
+                      <article className="transfer-item" key={file.id}>
+                        <div>
+                          <strong>{file.name}</strong>
+                          <p>
+                            {formatBytes(file.size)} · {file.status}
+                          </p>
+                        </div>
+                        <progress max="100" value={file.progress ?? 0} />
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty-state">Nothing sent yet.</p>
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div>
-              <h3>Received</h3>
-              <div className="transfer-list">
-                {incomingFiles.length ? (
-                  incomingFiles.map((file) => (
-                    <article className="transfer-item" key={file.id}>
-                      <div>
-                        <strong>{file.name}</strong>
-                        <p>
-                          {formatBytes(file.size)} · {file.status}
-                        </p>
-                      </div>
-                      <progress max="100" value={file.progress ?? 0} />
-                      {file.url ? (
-                        <a className="download-link" href={file.url} download={file.name}>
-                          Download
-                        </a>
-                      ) : null}
-                    </article>
-                  ))
-                ) : (
-                  <p className="empty-state">Nothing received yet.</p>
-                )}
+              <div>
+                <h3>Received</h3>
+                <div className="transfer-list">
+                  {incomingFiles.length ? (
+                    incomingFiles.map((file) => (
+                      <article className="transfer-item" key={file.id}>
+                        <div>
+                          <strong>{file.name}</strong>
+                          <p>
+                            {formatBytes(file.size)} · {file.status}
+                          </p>
+                        </div>
+                        <progress max="100" value={file.progress ?? 0} />
+                        {file.url ? (
+                          <a className="download-link" href={file.url} download={file.name}>
+                            Download
+                          </a>
+                        ) : null}
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty-state">Nothing received yet.</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </section>
-      </main>
-
-      <section className="panel footer-panel">
-        <div>
-          <h2>How the serverless flow works</h2>
-          <ol className="steps">
-            <li>Device A generates a QR code containing the app URL and compressed WebRTC offer.</li>
-            <li>Device B scans the URL, opens the PWA, and generates the answer locally.</li>
-            <li>Device B shows an answer QR code back to device A to complete the handshake.</li>
-            <li>The actual file bytes move over a direct WebRTC data channel.</li>
-          </ol>
-        </div>
-
-        <div>
-          <h3>Activity</h3>
-          <ul className="activity-list">
-            {activity.map((entry) => (
-              <li key={entry}>{entry}</li>
-            ))}
-          </ul>
-          <p className="footnote">
-            No TURN relay is configured, so restrictive networks can still block a direct connection.
-            For best results, use Chromium-based browsers on the same LAN or with open NAT traversal.
-          </p>
-        </div>
+        )}
       </section>
     </div>
   )
