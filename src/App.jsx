@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
   compressToEncodedURIComponent,
@@ -76,6 +76,46 @@ function getDeviceName() {
   }
 
   return `${device} · ${browser}`
+}
+
+function createLocalDeviceId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function getStoredDeviceId() {
+  if (typeof localStorage === 'undefined') {
+    return createLocalDeviceId()
+  }
+
+  try {
+    const existingId = localStorage.getItem('peerdrop-device-id')
+
+    if (existingId) {
+      return existingId
+    }
+
+    const nextId = createLocalDeviceId()
+    localStorage.setItem('peerdrop-device-id', nextId)
+    return nextId
+  } catch {
+    return createLocalDeviceId()
+  }
+}
+
+function formatNearbyStatus(device) {
+  if (device.status === 'ready' && device.roomId) {
+    return `Ready to pair · Room ${device.roomId}`
+  }
+
+  if (device.status === 'connected') {
+    return 'Busy in an active transfer'
+  }
+
+  if (device.status === 'approval') {
+    return 'Waiting for host approval'
+  }
+
+  return 'App open on this network'
 }
 
 function encodeSignal(kind, description) {
@@ -194,6 +234,7 @@ function App() {
   const sendQueueRef = useRef(Promise.resolve())
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const localDeviceIdRef = useRef(getStoredDeviceId())
   const frameRef = useRef(null)
   const objectUrlsRef = useRef([])
   const sessionTokenRef = useRef('')
@@ -237,6 +278,8 @@ function App() {
   const [isConnected, setIsConnected] = useState(false)
   const [outgoingFiles, setOutgoingFiles] = useState([])
   const [incomingFiles, setIncomingFiles] = useState([])
+  const [nearbyDevices, setNearbyDevices] = useState([])
+  const [presenceError, setPresenceError] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState('')
   const [scannerTitle, setScannerTitle] = useState('Scan QR code')
@@ -251,6 +294,7 @@ function App() {
   }))
 
   const canScanQr = typeof window !== 'undefined' && 'BarcodeDetector' in window
+  const localDeviceId = localDeviceIdRef.current
   const localDeviceName = getDeviceName()
   const appUrl = typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}`
@@ -283,6 +327,31 @@ function App() {
 
     return response.json()
   }
+
+  const requestPresence = useCallback(async (init = {}) => {
+    if (!signalingUrl) {
+      return { devices: [] }
+    }
+
+    const query = new URLSearchParams({ deviceId: localDeviceId }).toString()
+    const response = await fetch(`${signalingUrl}/presence?${query}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(init.headers ?? {}),
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error('Could not check for nearby devices through the signaling service.')
+    }
+
+    if (response.status === 204) {
+      return { devices: [] }
+    }
+
+    return response.json()
+  }, [localDeviceId, signalingUrl])
 
   async function waitForRoomDescription(roomId, field, sessionToken, waitMessage) {
     if (waitMessage) {
@@ -954,6 +1023,78 @@ function App() {
   }, [isConnected, pendingSharedFiles])
 
   useEffect(() => {
+    if (!usesSignalServer) {
+      setNearbyDevices([])
+      setPresenceError('')
+      return
+    }
+
+    let isActive = true
+
+    const syncPresence = async () => {
+      try {
+        const result = await requestPresence({
+          method: 'POST',
+          body: JSON.stringify({
+            deviceId: localDeviceId,
+            deviceName: localDeviceName,
+            roomId: roomCode,
+            status: isConnected ? 'connected' : pendingApproval ? 'approval' : inviteLink ? 'ready' : 'idle',
+          }),
+        })
+
+        if (!isActive) {
+          return
+        }
+
+        setNearbyDevices(Array.isArray(result?.devices) ? result.devices : [])
+        setPresenceError('')
+      } catch {
+        if (!isActive) {
+          return
+        }
+
+        setPresenceError('Could not look for other devices on this network right now.')
+      }
+    }
+
+    void syncPresence()
+    const intervalId = window.setInterval(() => {
+      void syncPresence()
+    }, 15000)
+
+    return () => {
+      isActive = false
+      window.clearInterval(intervalId)
+    }
+  }, [inviteLink, isConnected, localDeviceId, localDeviceName, pendingApproval, requestPresence, roomCode, usesSignalServer])
+
+  useEffect(() => {
+    if (!usesSignalServer) {
+      return
+    }
+
+    const clearPresence = () => {
+      void fetch(`${signalingUrl}/presence?deviceId=${encodeURIComponent(localDeviceId)}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ deviceId: localDeviceId }),
+        keepalive: true,
+      }).catch(() => {
+        // Ignore cleanup failures while unloading.
+      })
+    }
+
+    window.addEventListener('pagehide', clearPresence)
+
+    return () => {
+      window.removeEventListener('pagehide', clearPresence)
+    }
+  }, [localDeviceId, signalingUrl, usesSignalServer])
+
+  useEffect(() => {
     if (typeof window === 'undefined' || typeof navigator === 'undefined') {
       return
     }
@@ -1120,6 +1261,41 @@ function App() {
                 </div>
               )}
             </div>
+
+            {usesSignalServer ? (
+              <div className="qr-card nearby-card">
+                <h2>Devices on this network</h2>
+                <p className="card-copy">Recently seen devices sharing the same network can appear here automatically.</p>
+                <div className="nearby-list">
+                  {nearbyDevices.length ? (
+                    nearbyDevices.map((device) => (
+                      <article className="nearby-item" key={device.deviceId}>
+                        <div>
+                          <strong>{device.deviceName || 'Another device'}</strong>
+                          <p>{formatNearbyStatus(device)}</p>
+                        </div>
+                        {device.status === 'ready' && device.roomId ? (
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => {
+                              void joinRoom(device.roomId).catch((error) => {
+                                setStatus(error instanceof Error ? error.message : 'Could not join that device.')
+                              })
+                            }}
+                          >
+                            Join
+                          </button>
+                        ) : null}
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty-state">No other devices detected on this network right now.</p>
+                  )}
+                </div>
+                {presenceError ? <p className="warning-text">{presenceError}</p> : null}
+              </div>
+            ) : null}
 
             {scannerError ? <p className="warning-text standalone-warning">{scannerError}</p> : null}
           </div>
