@@ -1,0 +1,249 @@
+.app-shell {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.hero-card,
+.panel {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 24px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.24);
+  backdrop-filter: blur(18px);
+}
+
+.hero-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1.5rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.75rem;
+  color: #38bdf8;
+}
+
+.lead {
+  max-width: 64ch;
+}
+
+.hero-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.hero-badges span,
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.9rem;
+  background: rgba(59, 130, 246, 0.14);
+  color: #dbeafe;
+}
+
+.status-pill.connected {
+  background: rgba(16, 185, 129, 0.18);
+  color: #d1fae5;
+}
+
+.main-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel {
+  padding: 1.25rem;
+}
+
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+  margin-bottom: 1rem;
+}
+
+.panel-heading p,
+.card-copy,
+.manual-panel p,
+.footnote,
+.transfer-item p,
+.empty-state {
+  color: #bfd0ec;
+}
+
+.button {
+  appearance: none;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #38bdf8, #8b5cf6);
+  color: #08111f;
+  font-weight: 700;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  transition: transform 0.16s ease, opacity 0.16s ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+}
+
+.button.secondary {
+  background: rgba(148, 163, 184, 0.14);
+  color: #e2e8f0;
+}
+
+.button.ghost {
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  color: #cbd5e1;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.qr-card,
+.manual-panel,
+.scanner-box {
+  display: grid;
+  gap: 0.8rem;
+  justify-items: start;
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.qr-card svg {
+  border-radius: 16px;
+  background: white;
+  padding: 0.6rem;
+}
+
+.accent-card {
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.manual-panel textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 5.5rem;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  padding: 0.85rem;
+  resize: vertical;
+}
+
+.warning-text {
+  margin: 0;
+  color: #fbbf24;
+}
+
+.scanner-box video {
+  width: min(100%, 320px);
+  border-radius: 16px;
+  background: #020617;
+}
+
+.dropzone {
+  display: block;
+  border: 1.5px dashed rgba(56, 189, 248, 0.45);
+  border-radius: 18px;
+  padding: 1rem;
+  background: rgba(56, 189, 248, 0.06);
+  cursor: pointer;
+  margin-bottom: 1rem;
+}
+
+.dropzone input {
+  display: none;
+}
+
+.dropzone.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.transfer-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.transfer-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.transfer-item {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.transfer-item strong {
+  display: block;
+  color: #f8fafc;
+}
+
+.transfer-item p {
+  margin: 0.2rem 0 0;
+  font-size: 0.92rem;
+}
+
+progress {
+  width: 100%;
+  height: 0.65rem;
+}
+
+.download-link {
+  color: #7dd3fc;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.footer-panel {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.steps,
+.activity-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.steps li,
+.activity-list li {
+  margin-bottom: 0.55rem;
+}
+
+@media (max-width: 900px) {
+  .main-grid,
+  .transfer-grid,
+  .footer-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-heading {
+    flex-direction: column;
+  }
+}
